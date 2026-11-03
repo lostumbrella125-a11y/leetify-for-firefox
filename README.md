@@ -25,6 +25,15 @@ A polished Firefox WebExtension that turns Codeforces problem pages into a focus
 
 The extension has no build step and uses only WebExtension APIs available in Firefox.
 
+## First run and help
+
+Open **Leetify for Codeforces — Help and privacy** from the extension's options page for setup steps, keyboard shortcuts, accessibility details, and data controls. In the workspace, **Quick help** in the problem sidebar provides the same essential shortcuts.
+
+- `Tab` inserts four spaces in the code editor.
+- `Ctrl/Cmd + Enter` runs the selected test case.
+- `Escape` closes the workspace and restores focus to the Codeforces page.
+- Arrow keys move between view/test tabs; the statement/editor divider is keyboard-resizable.
+
 ## Development checks
 
 ```bash
@@ -34,4 +43,4 @@ npm run validate
 
 ## Privacy
 
-Drafts and notes remain in the browser's local extension storage. The extension only injects into Codeforces pages and does not include an analytics service or remote backend.
+Leetify requests `storage`, `activeTab`, and Codeforces page access so it can inject the workspace, save drafts locally, read problem statements, and complete the submission handoff. Drafts, test cases, notes, and preferences remain in Firefox's local extension storage. The extension does not include an analytics service, remote backend, advertising, or data sharing.
