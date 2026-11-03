@@ -2,6 +2,8 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
   const extensionGlobal = typeof globalThis !== "undefined" ? globalThis : window;
   const core = extensionGlobal.LeetifyCore || window.LeetifyCore;
+  const runnerApi = extensionGlobal.LeetifyRunner || window.LeetifyRunner;
+  const testcaseApi = extensionGlobal.LeetifyTestcases || window.LeetifyTestcases;
 
   if (!core) return;
 
@@ -13,6 +15,8 @@
   let metadata;
   let saveTimer;
   let activeTest = 0;
+  let javascriptRunner;
+  let runToken = 0;
 
   const storageGet = async (key) => {
     try {
@@ -94,7 +98,7 @@
       .side-footer { padding: 12px 8px 0; color: #777; font-size: 10px; line-height: 1.5; }
       .workspace { min-width: 0; min-height: 0; display: flex; flex: 1; flex-direction: column; background: #1a1a1a; }
       .workspace-toolbar { height: 48px; flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid #383838; background: #202020; }
-      .tabs, .toolbar-actions, .editor-tabs, .editor-actions, .test-tabs { display: flex; align-items: center; gap: 6px; }
+      .tabs, .toolbar-actions, .editor-tabs, .editor-actions, .test-tabs, .test-actions { display: flex; align-items: center; gap: 6px; }
       .tab { height: 48px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: #929292; background: transparent; }
       .tab:hover { color: #eee; background: transparent; }
       .tab.active { border-bottom-color: #ffa116; color: #f4f4f4; }
@@ -136,6 +140,7 @@
       .test-header { display: flex; align-items: center; min-height: 43px; gap: 9px; padding: 7px 12px 0; border-bottom: 1px solid #3b3b3b; }
       .test-title { margin-right: 5px; color: #e6e6e6; font-size: 12px; font-weight: 700; }
       .test-tabs { min-width: 0; overflow-x: auto; }
+      .test-actions { margin-left: auto; flex-shrink: 0; }
       .test-tab { padding: 5px 8px; border: 0; color: #999; background: transparent; font-size: 11px; white-space: nowrap; }
       .test-tab.active { color: #ffa116; }
       .test-body { min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 11px; padding: 10px 12px 12px; flex: 1; }
@@ -199,7 +204,9 @@
       ...fallback,
       ...(saved || {}),
       codeByLanguage: { ...fallback.codeByLanguage, ...((saved && saved.codeByLanguage) || {}) },
-      tests: Array.isArray(saved && saved.tests) && saved.tests.length ? saved.tests : fallback.tests
+      tests: testcaseApi
+        ? testcaseApi.normalizeTests(Array.isArray(saved && saved.tests) && saved.tests.length ? saved.tests : fallback.tests)
+        : (Array.isArray(saved && saved.tests) && saved.tests.length ? saved.tests : fallback.tests)
     };
   }
 
@@ -248,7 +255,7 @@
         <aside class="problem-sidebar"><div class="sidebar-scroll"><div class="section-label">Workspace</div><nav class="nav-list"><button class="nav-item active" data-view="solve"><span class="nav-icon">⌘</span>Workspace</button><button class="nav-item" data-view="notes"><span class="nav-icon">▤</span>My notes</button><button class="nav-item" data-view="analytics"><span class="nav-icon">◔</span>Analytics</button><button class="nav-item" data-view="training"><span class="nav-icon">↗</span>Training plan</button></nav><div class="section-label">Problem</div><div class="meta-card"><div class="meta-row"><span>Difficulty</span><strong class="meta-value">${escapeHtml(metadata.rating)}</strong></div><div class="difficulty-bar"><span></span></div><div class="tag-list">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div><div class="focus-card"><strong>Practice focus</strong>Build the invariant first, then test the smallest edge case. Your notes and attempts stay attached to this problem.</div><button class="nav-item" data-action="mark-solved" style="margin-top:12px"><span class="nav-icon">✓</span><span data-mark-solved-label>Mark as solved</span></button><div class="side-footer">Drafts, test cases, and notes are saved locally in Firefox.</div></div></aside>
         <main class="workspace">
           <div class="workspace-toolbar"><div class="tabs"><button class="tab active" data-view="solve">Workspace</button><button class="tab" data-view="notes">Problem notes</button><button class="tab" data-view="analytics">Progress</button></div><div class="toolbar-actions"><button class="ghost" data-action="open-original">Open original</button><button class="primary" data-action="submit">Submit</button></div></div>
-          <section class="split" data-split><article class="statement-pane"><div class="statement-head"><span class="eyebrow">Problem statement</span><button class="ghost" data-action="collapse-statement">Collapse</button></div><div data-statement-slot></div></article><div class="drag-handle" data-drag-handle title="Drag to resize"></div><section class="editor-pane"><div class="editor-header"><div class="editor-tabs"><button class="editor-tab active">Code</button><button class="editor-tab" data-view="notes">Notes</button></div><div class="editor-actions"><button class="icon-btn" data-action="reset-code" title="Reset starter code">↺</button><select data-language aria-label="Programming language">${Object.entries(core.LANGUAGES).map(([id, language]) => `<option value="${id}" ${state.language === id ? "selected" : ""}>${language.label}</option>`).join("")}</select><button class="primary" data-action="run-test">Run</button></div></div><div class="code-wrap"><div class="line-numbers" data-line-numbers></div><textarea class="code-input" data-code spellcheck="false" aria-label="Solution code"></textarea></div><div class="editor-footer"><span>Tab inserts spaces · Ctrl/Cmd + Enter runs</span><span data-code-stats></span></div><div class="test-panel"><div class="test-header"><span class="test-title">Testcase</span><div class="test-tabs" data-test-tabs></div><button class="ghost" data-action="add-test">+ Add testcase</button></div><div class="test-body"><div class="test-field"><label for="test-input">Input</label><textarea id="test-input" class="test-input" data-test-input spellcheck="false"></textarea></div><div class="test-field"><label for="test-output">Expected output</label><textarea id="test-output" class="test-input" data-test-output spellcheck="false"></textarea><div class="result" data-result>JavaScript is available for local runs. Submit other languages to Codeforces.</div></div></div></div></section></section>
+          <section class="split" data-split><article class="statement-pane"><div class="statement-head"><span class="eyebrow">Problem statement</span><button class="ghost" data-action="collapse-statement">Collapse</button></div><div data-statement-slot></div></article><div class="drag-handle" data-drag-handle title="Drag to resize"></div><section class="editor-pane"><div class="editor-header"><div class="editor-tabs"><button class="editor-tab active">Code</button><button class="editor-tab" data-view="notes">Notes</button></div><div class="editor-actions"><button class="icon-btn" data-action="reset-code" title="Reset starter code">↺</button><select data-language aria-label="Programming language">${Object.entries(core.LANGUAGES).map(([id, language]) => `<option value="${id}" ${state.language === id ? "selected" : ""}>${language.label}</option>`).join("")}</select><button class="primary" data-action="run-test">Run</button></div></div><div class="code-wrap"><div class="line-numbers" data-line-numbers></div><textarea class="code-input" data-code spellcheck="false" aria-label="Solution code"></textarea></div><div class="editor-footer"><span>Tab inserts spaces · Ctrl/Cmd + Enter runs</span><span data-code-stats></span></div><div class="test-panel"><div class="test-header"><span class="test-title">Testcase</span><div class="test-tabs" data-test-tabs></div><div class="test-actions"><button class="ghost" data-action="rename-test">Rename</button><button class="ghost" data-action="duplicate-test">Duplicate</button><button class="ghost" data-action="move-test" data-direction="left" title="Move testcase left">←</button><button class="ghost" data-action="move-test" data-direction="right" title="Move testcase right">→</button><button class="ghost" data-action="delete-test">Delete</button><button class="ghost" data-action="add-test">+ Add testcase</button></div></div><div class="test-body"><div class="test-field"><label for="test-input">Input</label><textarea id="test-input" class="test-input" data-test-input spellcheck="false"></textarea></div><div class="test-field"><label for="test-output">Expected output</label><textarea id="test-output" class="test-input" data-test-output spellcheck="false"></textarea><div class="result" data-result>JavaScript is available for local runs. Submit other languages to Codeforces.</div></div></div></div></section></section>
           <section class="notes-pane"><div class="page-heading"><h2>My notes</h2><p>Keep the observation, mistake, or reusable pattern you want to remember for ${escapeHtml(metadata.label)}.</p></div><div class="notes-grid"><textarea class="notes-input" data-notes placeholder="What is the key idea? What did you try? What should you remember?"></textarea><div class="note-prompts"><h3>Useful prompts</h3><button class="prompt" data-prompt="Observation: ">Observation</button><button class="prompt" data-prompt="Invariant: ">Invariant</button><button class="prompt" data-prompt="Mistake: ">Mistake</button><button class="prompt" data-prompt="Complexity: ">Complexity</button><button class="prompt" data-prompt="Editorial insight: ">Editorial insight</button></div></div></section>
           <section class="analytics-pane"><div class="page-heading"><h2>Your progress</h2><p>A private view of the habits you build while solving Codeforces problems in Leetify.</p></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">Current streak</span><strong class="metric-value orange" data-metric-streak>1 day</strong></div><div class="metric-card"><span class="metric-label">Problems solved</span><strong class="metric-value green" data-metric-solved>0</strong></div><div class="metric-card"><span class="metric-label">Attempts here</span><strong class="metric-value" data-metric-attempts>0</strong></div><div class="metric-card"><span class="metric-label">Growth zone</span><strong class="metric-value">${escapeHtml(metadata.rating)}</strong></div></div><div class="chart-card"><div class="chart-title"><span>Topic strength</span><span style="color:#888;font-weight:400">Local estimate</span></div><div class="bar-row"><span>implementation</span><div class="bar"><span style="width:72%"></span></div><b>72%</b></div><div class="bar-row"><span>${escapeHtml(tags[0] || "algorithms")}</span><div class="bar"><span style="width:54%"></span></div><b>54%</b></div><div class="bar-row"><span>problem solving</span><div class="bar"><span style="width:38%"></span></div><b>38%</b></div></div></section>
           <section class="training-pane"><div class="page-heading"><h2>Training plan</h2><p>Practice recommendations around the difficulty and topics of this problem.</p></div><div class="training-grid"><div class="training-card"><h3>Growth zone</h3><p>Problems near your current band. Build consistency with familiar patterns and clean implementations.</p><a class="training-link" href="/problemset?tags=${encodeURIComponent(tags[0] || "implementation")}" target="_blank">Browse similar →</a></div><div class="training-card"><h3>Stretch zone</h3><p>Push one concept beyond your comfort zone. Use the statement first, then write down the invariant.</p><a class="training-link" href="/problemset?order=BY_RATING" target="_blank">Find a challenge →</a></div><div class="training-card"><h3>Revision queue</h3><p>Come back to this problem after your note is complete. Mark it solved to keep your personal streak honest.</p><button class="ghost" data-action="mark-solved">Add to revision queue</button></div></div></section>
@@ -365,6 +372,10 @@
         queueSave();
       }
       if (action.dataset.action === "add-test") addTest();
+      if (action.dataset.action === "rename-test") renameTest();
+      if (action.dataset.action === "duplicate-test") duplicateTest();
+      if (action.dataset.action === "delete-test") deleteTest();
+      if (action.dataset.action === "move-test") moveTest(action.dataset.direction);
       if (action.dataset.action === "run-test") runTest();
       if (action.dataset.action === "submit") submitCode();
     });
@@ -446,14 +457,54 @@
 
   function addTest() {
     saveActiveTest();
-    const number = state.tests.length + 1;
-    state.tests.push({ id: `custom-${Date.now()}`, label: `Custom ${number}`, input: "", output: "" });
+    state.tests = testcaseApi
+      ? testcaseApi.addTestcase(state.tests, { id: `custom-${Date.now()}`, label: `Custom ${state.tests.length + 1}` })
+      : [...state.tests, { id: `custom-${Date.now()}`, label: `Custom ${state.tests.length + 1}`, input: "", output: "" }];
     activeTest = state.tests.length - 1;
     refreshTests();
     queueSave();
   }
 
-  function runTest() {
+  function renameTest() {
+    saveActiveTest();
+    const test = state.tests[activeTest];
+    if (!test || typeof window.prompt !== "function") return;
+    const label = window.prompt("Testcase name", test.label);
+    if (label == null) return;
+    state.tests = testcaseApi ? testcaseApi.renameTestcase(state.tests, activeTest, label) : state.tests;
+    refreshTests();
+    queueSave();
+  }
+
+  function duplicateTest() {
+    saveActiveTest();
+    state.tests = testcaseApi ? testcaseApi.duplicateTestcase(state.tests, activeTest) : state.tests;
+    activeTest += 1;
+    refreshTests();
+    queueSave();
+  }
+
+  function deleteTest() {
+    saveActiveTest();
+    if (state.tests.length <= 1) return;
+    state.tests = testcaseApi ? testcaseApi.deleteTestcase(state.tests, activeTest) : state.tests.filter((test, index) => index !== activeTest);
+    activeTest = Math.min(activeTest, state.tests.length - 1);
+    refreshTests();
+    queueSave();
+  }
+
+  function moveTest(direction) {
+    saveActiveTest();
+    const nextIndex = direction === "left" ? activeTest - 1 : activeTest + 1;
+    if (nextIndex < 0 || nextIndex >= state.tests.length) return;
+    state.tests = testcaseApi ? testcaseApi.moveTestcase(state.tests, activeTest, direction) : state.tests;
+    activeTest = nextIndex;
+    refreshTests();
+    queueSave();
+  }
+
+  async function runTest() {
+    const token = ++runToken;
     saveActiveTest();
     state.attempts = (state.attempts || 0) + 1;
     refreshProblemStatus();
@@ -465,10 +516,16 @@
       resultNode.textContent = "Local execution currently supports JavaScript. Submit other languages to Codeforces.";
       return;
     }
-    const result = core.executeJavaScript(currentCode(), test.input || "");
+    resultNode.className = "result";
+    resultNode.textContent = "Running in a Web Worker…";
+    if (!javascriptRunner && runnerApi) javascriptRunner = runnerApi.createJavaScriptRunner();
+    const result = javascriptRunner
+      ? await javascriptRunner.run(currentCode(), test.input || "")
+      : core.executeJavaScript(currentCode(), test.input || "");
+    if (!shadow || token !== runToken) return;
     if (!result.ok) {
       resultNode.className = "result fail";
-      resultNode.textContent = `Runtime error: ${result.error}`;
+      resultNode.textContent = result.timedOut ? `Timeout: ${result.error}` : `Runtime error: ${result.error}`;
       return;
     }
     const passed = core.compareOutputs(result.output, test.output || "");
@@ -488,6 +545,11 @@
   }
 
   function closeWorkspace() {
+    runToken += 1;
+    if (javascriptRunner) {
+      javascriptRunner.terminate();
+      javascriptRunner = null;
+    }
     if (host) host.remove();
     host = null;
     shadow = null;
