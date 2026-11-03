@@ -14,6 +14,14 @@ test("normalizes whitespace when comparing testcase output", () => {
   assert.equal(core.compareOutputs("YES", "NO"), false);
 });
 
+test("highlights code as escaped token markup", () => {
+  const highlighted = core.highlightCode("const answer = 42; // done", "javascript");
+  assert.match(highlighted, /tok-keyword.*const/);
+  assert.match(highlighted, /tok-number.*42/);
+  assert.match(highlighted, /tok-comment.*done/);
+  assert.doesNotMatch(core.highlightCode("<script>", "javascript"), /<script>/);
+});
+
 test("runs JavaScript solve functions against input", () => {
   const result = core.executeJavaScript("function solve(input) { return input.trim().split('').reverse().join(''); }", "abc\n");
   assert.deepEqual(result, { ok: true, output: "cba" });

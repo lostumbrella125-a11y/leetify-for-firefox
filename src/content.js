@@ -126,6 +126,15 @@
       select { min-width: 118px; padding: 7px 26px 7px 9px; outline: 0; font-size: 11px; }
       select:focus, .test-input:focus, .notes-input:focus { border-color: #ffa116; }
       .code-wrap { min-height: 220px; display: grid; grid-template-columns: 44px 1fr; flex: 1; background: #1f1f1f; }
+      .code-editor-layer { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+      .code-highlight, .code-input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 220px; margin: 0; padding: 15px 16px; border: 0; outline: 0; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
+      .code-highlight { pointer-events: none; color: #e5e5e5; background: transparent; }
+      .code-input { z-index: 1; resize: none; color: transparent; background: transparent; caret-color: #ffa116; -webkit-text-fill-color: transparent; }
+      .code-input::selection { color: transparent; background: #5a4024; }
+      .tok-comment { color: #6b7680; }
+      .tok-string { color: #a8d18d; }
+      .tok-keyword { color: #e5a6ff; }
+      .tok-number { color: #8fc9e8; }
       .line-numbers { padding: 15px 10px 15px 0; overflow: hidden; color: #666; background: #1c1c1c; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; user-select: none; }
       .code-input { width: 100%; height: 100%; min-height: 220px; resize: none; padding: 15px 16px; border: 0; outline: 0; color: #e5e5e5; background: transparent; caret-color: #ffa116; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; }
       .code-input::selection, .notes-input::selection { color: #fff; background: #5a4024; }
@@ -268,6 +277,7 @@
     host.id = "leetify-extension-host";
     shadow = host.attachShadow({ mode: "open" });
     shadow.innerHTML = `<style>${styleSheet()}</style>${appTemplate()}`;
+    setupCodeHighlight();
     const statementSlot = shadow.querySelector("[data-statement-slot]");
     if (statementSlot) statementSlot.appendChild(metadata.statement.cloneNode(true));
     document.documentElement.appendChild(host);
@@ -315,10 +325,33 @@
     const code = shadow.querySelector("[data-code]");
     if (!code) return;
     code.value = currentCode();
+    updateCodeHighlight();
     updateLineNumbers();
     updateCodeStats();
     shadow.querySelector("[data-notes]").value = state.notes || "";
     shadow.querySelector("[data-split]").style.setProperty("--split", `${state.split || 46}%`);
+  }
+
+  function setupCodeHighlight() {
+    const code = shadow.querySelector("[data-code]");
+    if (!code || code.parentElement.classList.contains("code-editor-layer")) return;
+    const layer = document.createElement("div");
+    layer.className = "code-editor-layer";
+    const highlight = document.createElement("pre");
+    highlight.className = "code-highlight";
+    highlight.dataset.codeHighlight = "true";
+    highlight.setAttribute("aria-hidden", "true");
+    code.replaceWith(layer);
+    layer.append(highlight, code);
+  }
+
+  function updateCodeHighlight() {
+    const code = shadow && shadow.querySelector("[data-code]");
+    const highlight = shadow && shadow.querySelector("[data-code-highlight]");
+    if (!code || !highlight) return;
+    highlight.innerHTML = core.highlightCode(code.value, state.language);
+    highlight.scrollTop = code.scrollTop;
+    highlight.scrollLeft = code.scrollLeft;
   }
 
   function updateLineNumbers() {
@@ -485,11 +518,12 @@
 
     shadow.querySelector("[data-code]").addEventListener("input", () => {
       state.codeByLanguage[state.language] = shadow.querySelector("[data-code]").value;
+      updateCodeHighlight();
       updateLineNumbers();
       updateCodeStats();
       queueSave();
     });
-    shadow.querySelector("[data-code]").addEventListener("scroll", updateLineNumbers);
+    shadow.querySelector("[data-code]").addEventListener("scroll", () => { updateLineNumbers(); updateCodeHighlight(); });
     shadow.querySelector("[data-code]").addEventListener("keydown", (event) => {
       if (event.key === "Tab") {
         event.preventDefault();
@@ -859,6 +893,25 @@
     handoffTimer = setTimeout(() => { if (handoffObserver) handoffObserver.disconnect(); }, 15000);
   }
 
+  async function decorateSolvedIndicators() {
+    const states = await store.listProblemStates();
+    const byKey = new Map(states.map((item) => [item.key, item]));
+    const links = Array.from(document.querySelectorAll("a[href*='/problemset/problem/'], a[href*='/contest/'][href*='/problem/'], a[href*='/gym/'][href*='/problem/'], a[href*='/group/'][href*='/problem/']"));
+    links.forEach((link) => {
+      if (link.nextElementSibling?.classList.contains("leetify-problem-status")) return;
+      let route;
+      try { route = core.parseProblemUrl(new URL(link.href, window.location.href).pathname); } catch (error) { route = null; }
+      if (!route) return;
+      const saved = byKey.get(route.key);
+      if (!saved || (!saved.solved && !saved.attempts)) return;
+      const badge = document.createElement("span");
+      badge.className = "leetify-problem-status";
+      badge.textContent = saved.solved ? "✓ solved" : `${saved.attempts} attempt${saved.attempts === 1 ? "" : "s"}`;
+      Object.assign(badge.style, { display: "inline-block", marginLeft: "7px", padding: "2px 5px", borderRadius: "4px", color: saved.solved ? "#2db55d" : "#9a9a9a", background: saved.solved ? "#e8f7ed" : "#f0f0f0", font: "10px/1.2 system-ui, sans-serif", whiteSpace: "nowrap" });
+      link.insertAdjacentElement("afterend", badge);
+    });
+  }
+
   function showHandoffBanner(pending, ready) {
     let banner = document.querySelector("[data-leetify-handoff]");
     if (!banner) {
@@ -982,6 +1035,7 @@
     const route = core.parseSubmissionRoute(window.location.pathname);
     if (!currentMetadata) {
       await showSubmissionHandoff();
+      await decorateSolvedIndicators();
       if (route && route.action === "status") await startStatusBridge();
       return;
     }

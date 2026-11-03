@@ -6,15 +6,20 @@ A polished Firefox WebExtension that turns Codeforces problem pages into a focus
 
 - LeetCode-inspired dark workspace with a compact rail, problem sidebar, focused typography, and a resizable statement/editor split.
 - C++17, Python 3, Java 17, and JavaScript draft templates.
+- Lightweight syntax highlighting with line numbers, tab indentation, reset, and language-aware starter code.
 - Per-problem drafts, notes, language selection, split position, bookmarks, solved state, attempt count, samples, and custom tests saved in Firefox storage.
-- Built-in JavaScript runner with whitespace-normalized output comparison.
+- Sandboxed Web Worker JavaScript runner with timeout protection and whitespace-normalized output comparison; other languages hand off to Codeforces.
+- Testcase rename, duplicate, delete, reorder, and custom testcase support.
 - One-click handoff to the native Codeforces submission page, including code and language selection.
+- Submission form/Ace editor filling, native submission attempt tracking, visible verdict state, and Codeforces status-page polling.
 - Difficulty and topic tags read from the Codeforces page.
 - Works on problemset, contest, and gym problem routes.
 - My Notes view with prompts for observations, invariants, mistakes, complexity, and editorial insights.
 - Progress view with streak, solved, attempts, notes, and topic-strength values derived from local state and history.
 - Searchable notes dashboard in the extension options page, with problem links and local revision queues.
 - Training view with unfinished practice, topic focus, and solved-problem revision queues derived from saved activity.
+- Solved/attempted badges on Codeforces problemset and contest links when matching local history exists.
+- Firefox toolbar icons, keyboard navigation, focus restoration, responsive layout, and an options-page help/privacy guide.
 
 ## Install temporarily in Firefox
 
@@ -39,7 +44,10 @@ Open **Leetify for Codeforces — Help and privacy** from the extension's option
 ```bash
 npm test
 npm run validate
+npm run package-extension
 ```
+
+The package command creates `dist/leetify-firefox-<version>.xpi` for temporary Firefox loading or submission to Mozilla Add-ons.
 
 ## Privacy
 

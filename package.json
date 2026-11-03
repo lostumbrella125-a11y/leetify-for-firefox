@@ -5,6 +5,7 @@
   "description": "Firefox WebExtension that adds a modern Codeforces solving workspace.",
   "scripts": {
     "test": "node --test",
-    "validate": "node scripts/validate-manifest.js"
+    "validate": "node scripts/validate-manifest.js",
+    "package-extension": "node scripts/package-extension.js"
   }
 }

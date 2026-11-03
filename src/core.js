@@ -325,6 +325,26 @@ public class Main {
     return normalizeOutput(actual) === normalizeOutput(expected);
   }
 
+  function highlightCode(source, language) {
+    const escaped = String(source == null ? "" : source)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+    const keywords = language === "python"
+      ? "and|as|assert|async|await|break|class|continue|def|elif|else|for|from|if|import|in|is|lambda|not|or|pass|print|raise|return|try|while|with|yield"
+      : "class|const|else|for|function|if|import|new|private|public|return|static|switch|this|throw|try|var|void|while|async|await|break|case|continue|extends|interface|package|protected|implements|using|namespace|auto|bool|int|long|double|float|char|true|false|null|undefined|final|boolean|String";
+    const tokenPattern = new RegExp(`(//[^\\n]*|#[^\\n]*|/\\*[\\s\\S]*?\\*/)|(&quot;(?:\\\\.|[^&]|&(?!quot;))*?&quot;|'(?:\\\\.|[^'])*'|\\x60(?:\\\\.|[^\\x60])*\\x60)|(\\b(?:${keywords})\\b)|(\\b\\d+(?:\\.\\d+)?\\b)`, "g");
+    return escaped.replace(tokenPattern, (match, comment, string, keyword, number) => {
+      if (comment) return `<span class="tok-comment">${comment}</span>`;
+      if (string) return `<span class="tok-string">${string}</span>`;
+      if (keyword) return `<span class="tok-keyword">${keyword}</span>`;
+      if (number) return `<span class="tok-number">${number}</span>`;
+      return match;
+    });
+  }
+
   function executeJavaScript(source, input) {
     const logs = [];
     const consoleProxy = {
@@ -367,6 +387,7 @@ public class Main {
     parseSampleTests,
     normalizeOutput,
     compareOutputs,
+    highlightCode,
     executeJavaScript,
     submitPath
   };
