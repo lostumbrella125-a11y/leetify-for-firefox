@@ -1,7 +1,7 @@
 (function () {
   const api = typeof browser !== "undefined" ? browser : chrome;
-  const core = window.LeetifyCore;
-  const metadata = core && core.parseProblemMetadata(document, window.location);
+  const extensionGlobal = typeof globalThis !== "undefined" ? globalThis : window;
+  const core = extensionGlobal.LeetifyCore || window.LeetifyCore;
 
   if (!core) return;
 
@@ -10,6 +10,7 @@
   let host;
   let shadow;
   let state;
+  let metadata;
   let saveTimer;
   let activeTest = 0;
 
@@ -461,10 +462,13 @@
   }
 
   async function init() {
-    if (!metadata) {
+    const currentMetadata = core && core.parseProblemMetadata(document, window.location);
+    if (!currentMetadata) {
       await showSubmissionHandoff();
       return;
     }
+    if (host) return;
+    metadata = currentMetadata;
     await loadState();
     render();
   }
@@ -479,4 +483,7 @@
   }
 
   init();
+  setTimeout(() => {
+    if (!host && core && core.parseProblemUrl(window.location.pathname) && document.querySelector(".problem-statement")) init();
+  }, 750);
 })();
