@@ -4,36 +4,24 @@
   const core = extensionGlobal.LeetifyCore || window.LeetifyCore;
   const runnerApi = extensionGlobal.LeetifyRunner || window.LeetifyRunner;
   const testcaseApi = extensionGlobal.LeetifyTestcases || window.LeetifyTestcases;
+  const history = extensionGlobal.LeetifyHistory || window.LeetifyHistory;
 
-  if (!core) return;
+  if (!core || !history) return;
 
-  const stateKey = (key) => `leetify:state:${key}`;
+  const store = history.createLocalStore(api.storage && api.storage.local);
   const pendingKey = "leetify:pending-submission";
   let host;
   let shadow;
   let state;
   let metadata;
+  let dashboard;
   let saveTimer;
   let activeTest = 0;
   let javascriptRunner;
   let runToken = 0;
 
-  const storageGet = async (key) => {
-    try {
-      const value = await api.storage.local.get(key);
-      return value[key];
-    } catch (error) {
-      return undefined;
-    }
-  };
-
-  const storageSet = async (key, value) => {
-    try {
-      await api.storage.local.set({ [key]: value });
-    } catch (error) {
-      // Private browsing or a disabled storage area should not break editing.
-    }
-  };
+  const storageGet = (key) => store.get(key);
+  const storageSet = (key, value) => store.set(key, value);
 
   const escapeHtml = (value) => String(value == null ? "" : value)
     .replace(/&/g, "&amp;")
@@ -175,6 +163,19 @@
       .training-card { min-height: 160px; }
       .training-card p { color: #999; font-size: 11px; line-height: 1.55; }
       .training-link { display: inline-block; margin-top: 5px; color: #ffa116; font-size: 11px; }
+      .notes-search { max-width: 920px; display: flex; gap: 9px; margin: 0 auto 14px; }
+      .notes-search input { min-width: 0; flex: 1; padding: 9px 11px; border: 1px solid #484848; border-radius: 5px; outline: 0; color: #d7d7d7; background: #1d1d1d; font: 12px/1.5 inherit; }
+      .notes-search input:focus { border-color: #ffa116; }
+      .notes-results { max-width: 920px; display: grid; gap: 8px; margin: 0 auto 15px; }
+      .note-result { display: block; padding: 10px 12px; border: 1px solid #414141; border-radius: 5px; color: inherit; background: #282828; text-decoration: none; }
+      .note-result:hover { border-color: #6b5536; background: #302a22; }
+      .note-result-meta { color: #8e8e8e; font-size: 10px; }
+      .note-result-title { margin: 3px 0; color: #e4e4e4; font-size: 12px; font-weight: 650; }
+      .note-result-snippet { color: #a4a4a4; font-size: 11px; line-height: 1.45; }
+      .notes-count { max-width: 920px; margin: 0 auto 9px; color: #777; font-size: 10px; }
+      .data-empty { padding: 14px 0; color: #888; font-size: 11px; }
+      .training-card ul { padding-left: 16px; margin: 8px 0 0; color: #999; font-size: 11px; line-height: 1.6; }
+      .training-card li + li { margin-top: 5px; }
       .solved-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 4px; color: #4bd37a; background: #203e2a; font-size: 10px; font-weight: 700; }
       .hidden { display: none !important; }
       @media (max-width: 1050px) { .problem-sidebar { width: 190px; flex-basis: 190px; } .metric-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -198,7 +199,7 @@
   }
 
   async function loadState() {
-    const saved = await storageGet(stateKey(metadata.key));
+    const saved = await storageGet(history.stateKey(metadata.key));
     const fallback = defaultState();
     state = {
       ...fallback,
@@ -218,14 +219,35 @@
     updateSaveLabel("Saving…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      await storageSet(stateKey(metadata.key), state);
+      const saved = await store.saveProblemState(metadata.key, state, metadata);
+      if (saved) state.updatedAt = saved.updatedAt;
       updateSaveLabel("Saved locally");
+      refreshDashboard();
     }, 250);
   }
 
   function updateSaveLabel(text) {
     const label = shadow && shadow.querySelector("[data-save-state]");
     if (label) label.textContent = text;
+  }
+
+  function currentDashboard() {
+    return dashboard || { notes: [], metrics: { currentStreak: 0, solvedProblems: 0, totalProblems: 0, totalAttempts: 0, notesWritten: 0, topicStats: [] }, training: { practice: [], revision: [], topics: [] } };
+  }
+
+  function noteResultMarkup(notes) {
+    if (!notes.length) return '<div class="data-empty">No notes from other problems match this search.</div>';
+    return notes.slice(0, 8).map((note) => `<a class="note-result" href="${escapeHtml(note.url)}" target="_blank" rel="noopener"><div class="note-result-meta">${escapeHtml(note.label)} · ${escapeHtml(note.title)}${note.solved ? " · Solved" : ""}</div><div class="note-result-title">${escapeHtml(note.title)}</div><div class="note-result-snippet">${escapeHtml(note.snippet)}</div></a>`).join("");
+  }
+
+  function trainingListMarkup(items, emptyText) {
+    if (!items.length) return `<div class="data-empty">${escapeHtml(emptyText)}</div>`;
+    return `<ul>${items.slice(0, 5).map((item) => `<li><a class="training-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.label)} · ${escapeHtml(item.title)}</a></li>`).join("")}</ul>`;
+  }
+
+  function topicMarkup(topics) {
+    if (!topics.length) return '<div class="data-empty">Topic strength appears after you save tagged problems.</div>';
+    return topics.slice(0, 4).map((topic) => `<div class="bar-row"><span>${escapeHtml(topic.tag)}</span><div class="bar"><span style="width:${topic.score}%"></span></div><b>${topic.score}%</b></div>`).join("");
   }
 
   function render() {
@@ -241,10 +263,13 @@
     refreshEditor();
     refreshTests();
     refreshProblemStatus();
+    refreshDashboard();
   }
 
   function appTemplate() {
     const tags = metadata.tags.length ? metadata.tags : ["unclassified"];
+    const data = currentDashboard();
+    const metrics = data.metrics;
     return `<div class="app" role="application" aria-label="Leetify Codeforces workspace">
       <header class="topbar">
         <div class="topbar-left"><div class="brand"><div class="brand-mark">L</div><div><div class="brand-title">Leetify</div><div class="brand-subtitle">For Codeforces</div></div></div><span class="topbar-divider"></span><div class="problem-heading"><span class="problem-id">${escapeHtml(metadata.label)}</span><span class="problem-title">${escapeHtml(metadata.title)}</span><span data-solved-label class="solved-pill hidden">✓ Solved</span></div></div>
@@ -256,9 +281,9 @@
         <main class="workspace">
           <div class="workspace-toolbar"><div class="tabs"><button class="tab active" data-view="solve">Workspace</button><button class="tab" data-view="notes">Problem notes</button><button class="tab" data-view="analytics">Progress</button></div><div class="toolbar-actions"><button class="ghost" data-action="open-original">Open original</button><button class="primary" data-action="submit">Submit</button></div></div>
           <section class="split" data-split><article class="statement-pane"><div class="statement-head"><span class="eyebrow">Problem statement</span><button class="ghost" data-action="collapse-statement">Collapse</button></div><div data-statement-slot></div></article><div class="drag-handle" data-drag-handle title="Drag to resize"></div><section class="editor-pane"><div class="editor-header"><div class="editor-tabs"><button class="editor-tab active">Code</button><button class="editor-tab" data-view="notes">Notes</button></div><div class="editor-actions"><button class="icon-btn" data-action="reset-code" title="Reset starter code">↺</button><select data-language aria-label="Programming language">${Object.entries(core.LANGUAGES).map(([id, language]) => `<option value="${id}" ${state.language === id ? "selected" : ""}>${language.label}</option>`).join("")}</select><button class="primary" data-action="run-test">Run</button></div></div><div class="code-wrap"><div class="line-numbers" data-line-numbers></div><textarea class="code-input" data-code spellcheck="false" aria-label="Solution code"></textarea></div><div class="editor-footer"><span>Tab inserts spaces · Ctrl/Cmd + Enter runs</span><span data-code-stats></span></div><div class="test-panel"><div class="test-header"><span class="test-title">Testcase</span><div class="test-tabs" data-test-tabs></div><div class="test-actions"><button class="ghost" data-action="rename-test">Rename</button><button class="ghost" data-action="duplicate-test">Duplicate</button><button class="ghost" data-action="move-test" data-direction="left" title="Move testcase left">←</button><button class="ghost" data-action="move-test" data-direction="right" title="Move testcase right">→</button><button class="ghost" data-action="delete-test">Delete</button><button class="ghost" data-action="add-test">+ Add testcase</button></div></div><div class="test-body"><div class="test-field"><label for="test-input">Input</label><textarea id="test-input" class="test-input" data-test-input spellcheck="false"></textarea></div><div class="test-field"><label for="test-output">Expected output</label><textarea id="test-output" class="test-input" data-test-output spellcheck="false"></textarea><div class="result" data-result>JavaScript is available for local runs. Submit other languages to Codeforces.</div></div></div></div></section></section>
-          <section class="notes-pane"><div class="page-heading"><h2>My notes</h2><p>Keep the observation, mistake, or reusable pattern you want to remember for ${escapeHtml(metadata.label)}.</p></div><div class="notes-grid"><textarea class="notes-input" data-notes placeholder="What is the key idea? What did you try? What should you remember?"></textarea><div class="note-prompts"><h3>Useful prompts</h3><button class="prompt" data-prompt="Observation: ">Observation</button><button class="prompt" data-prompt="Invariant: ">Invariant</button><button class="prompt" data-prompt="Mistake: ">Mistake</button><button class="prompt" data-prompt="Complexity: ">Complexity</button><button class="prompt" data-prompt="Editorial insight: ">Editorial insight</button></div></div></section>
-          <section class="analytics-pane"><div class="page-heading"><h2>Your progress</h2><p>A private view of the habits you build while solving Codeforces problems in Leetify.</p></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">Current streak</span><strong class="metric-value orange" data-metric-streak>1 day</strong></div><div class="metric-card"><span class="metric-label">Problems solved</span><strong class="metric-value green" data-metric-solved>0</strong></div><div class="metric-card"><span class="metric-label">Attempts here</span><strong class="metric-value" data-metric-attempts>0</strong></div><div class="metric-card"><span class="metric-label">Growth zone</span><strong class="metric-value">${escapeHtml(metadata.rating)}</strong></div></div><div class="chart-card"><div class="chart-title"><span>Topic strength</span><span style="color:#888;font-weight:400">Local estimate</span></div><div class="bar-row"><span>implementation</span><div class="bar"><span style="width:72%"></span></div><b>72%</b></div><div class="bar-row"><span>${escapeHtml(tags[0] || "algorithms")}</span><div class="bar"><span style="width:54%"></span></div><b>54%</b></div><div class="bar-row"><span>problem solving</span><div class="bar"><span style="width:38%"></span></div><b>38%</b></div></div></section>
-          <section class="training-pane"><div class="page-heading"><h2>Training plan</h2><p>Practice recommendations around the difficulty and topics of this problem.</p></div><div class="training-grid"><div class="training-card"><h3>Growth zone</h3><p>Problems near your current band. Build consistency with familiar patterns and clean implementations.</p><a class="training-link" href="/problemset?tags=${encodeURIComponent(tags[0] || "implementation")}" target="_blank">Browse similar →</a></div><div class="training-card"><h3>Stretch zone</h3><p>Push one concept beyond your comfort zone. Use the statement first, then write down the invariant.</p><a class="training-link" href="/problemset?order=BY_RATING" target="_blank">Find a challenge →</a></div><div class="training-card"><h3>Revision queue</h3><p>Come back to this problem after your note is complete. Mark it solved to keep your personal streak honest.</p><button class="ghost" data-action="mark-solved">Add to revision queue</button></div></div></section>
+          <section class="notes-pane"><div class="page-heading"><h2>My notes</h2><p>Keep the observation, mistake, or reusable pattern you want to remember for ${escapeHtml(metadata.label)}.</p></div><div class="notes-grid"><textarea class="notes-input" data-notes placeholder="What is the key idea? What did you try? What should you remember?"></textarea><div class="note-prompts"><h3>Useful prompts</h3><button class="prompt" data-prompt="Observation: ">Observation</button><button class="prompt" data-prompt="Invariant: ">Invariant</button><button class="prompt" data-prompt="Mistake: ">Mistake</button><button class="prompt" data-prompt="Complexity: ">Complexity</button><button class="prompt" data-prompt="Editorial insight: ">Editorial insight</button></div></div><div class="notes-search"><input data-note-search type="search" placeholder="Search notes across problems" aria-label="Search notes across problems"></div><div class="notes-count" data-notes-count></div><div class="notes-results" data-notes-results></div></section>
+          <section class="analytics-pane"><div class="page-heading"><h2>Your progress</h2><p>Derived from saved problem state and local activity history in this browser.</p></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">Current streak</span><strong class="metric-value orange" data-metric-streak>${metrics.currentStreak || 0} day${metrics.currentStreak === 1 ? "" : "s"}</strong></div><div class="metric-card"><span class="metric-label">Problems solved</span><strong class="metric-value green" data-metric-solved>${metrics.solvedProblems || 0}</strong></div><div class="metric-card"><span class="metric-label">Problems practiced</span><strong class="metric-value" data-metric-problems>${metrics.totalProblems || 0}</strong></div><div class="metric-card"><span class="metric-label">Notes written</span><strong class="metric-value" data-metric-notes>${metrics.notesWritten || 0}</strong></div></div><div class="chart-card"><div class="chart-title"><span>Topic strength</span><span style="color:#888;font-weight:400">Saved local activity</span></div><div data-topic-strength>${topicMarkup(metrics.topicStats || [])}</div></div></section>
+          <section class="training-pane"><div class="page-heading"><h2>Training plan</h2><p>Keep working from the problems and topics already present in your local history.</p></div><div class="training-grid"><div class="training-card"><h3>Keep practicing</h3><p>Unsolved problems with notes or attempts are ready for another focused pass.</p><div data-training-practice>${trainingListMarkup(data.training.practice, "No unfinished practice items yet.")}</div></div><div class="training-card"><h3>Topic focus</h3><p>These topics have the most saved practice activity. Use them to choose your next problem.</p><div data-training-topics>${data.training.topics.length ? trainingListMarkup(data.training.topics.map((topic) => ({ url: `/problemset?tags=${encodeURIComponent(topic.tag)}`, label: topic.tag, title: `${topic.practiced} practiced · ${topic.solved} solved` })), "") : '<div class="data-empty">No topic activity yet.</div>'}</div></div><div class="training-card"><h3>Revision queue</h3><p>Revisit solved problems while their ideas are still connected to your notes.</p><div data-training-revision>${trainingListMarkup(data.training.revision, "Solved problems will appear here for revision.")}</div></div></div></section>
         </main>
       </div>
     </div>`;
@@ -320,8 +345,39 @@
     shadow.querySelectorAll("[data-mark-solved-label]").forEach((element) => {
       element.textContent = state.solved ? "Solved" : "Mark as solved";
     });
-    shadow.querySelector("[data-metric-solved]").textContent = state.solved ? "1" : "0";
-    shadow.querySelector("[data-metric-attempts]").textContent = String(state.attempts || 0);
+    const metrics = currentDashboard().metrics;
+    const values = {
+      "[data-metric-streak]": `${metrics.currentStreak || 0} day${metrics.currentStreak === 1 ? "" : "s"}`,
+      "[data-metric-solved]": metrics.solvedProblems || 0,
+      "[data-metric-problems]": metrics.totalProblems || 0,
+      "[data-metric-notes]": metrics.notesWritten || 0
+    };
+    Object.entries(values).forEach(([selector, value]) => {
+      const node = shadow.querySelector(selector);
+      if (node) node.textContent = String(value);
+    });
+  }
+
+  async function refreshDashboard() {
+    dashboard = await store.getDashboard();
+    if (!shadow) return;
+    refreshProblemStatus();
+    const query = shadow.querySelector("[data-note-search]")?.value || "";
+    const notes = history.searchNotes(dashboard.notes, query);
+    const noteResults = shadow.querySelector("[data-notes-results]");
+    const noteCount = shadow.querySelector("[data-notes-count]");
+    if (noteResults) noteResults.innerHTML = noteResultMarkup(notes);
+    if (noteCount) noteCount.textContent = `${notes.length} note${notes.length === 1 ? "" : "s"} matching this view`;
+    const topicStrength = shadow.querySelector("[data-topic-strength]");
+    if (topicStrength) topicStrength.innerHTML = topicMarkup(dashboard.metrics.topicStats || []);
+    const practice = shadow.querySelector("[data-training-practice]");
+    const topics = shadow.querySelector("[data-training-topics]");
+    const revision = shadow.querySelector("[data-training-revision]");
+    if (practice) practice.innerHTML = trainingListMarkup(dashboard.training.practice, "No unfinished practice items yet.");
+    if (topics) topics.innerHTML = dashboard.training.topics.length
+      ? trainingListMarkup(dashboard.training.topics.map((topic) => ({ url: `/problemset?tags=${encodeURIComponent(topic.tag)}`, label: topic.tag, title: `${topic.practiced} practiced · ${topic.solved} solved` })), "")
+      : '<div class="data-empty">No topic activity yet.</div>';
+    if (revision) revision.innerHTML = trainingListMarkup(dashboard.training.revision, "Solved problems will appear here for revision.");
   }
 
   function toggleSolved() {
@@ -414,6 +470,11 @@
     shadow.querySelector("[data-notes]").addEventListener("input", (event) => {
       state.notes = event.target.value;
       queueSave();
+    });
+    shadow.querySelector("[data-note-search]").addEventListener("input", (event) => {
+      const notes = history.searchNotes(currentDashboard().notes, event.target.value);
+      shadow.querySelector("[data-notes-results]").innerHTML = noteResultMarkup(notes);
+      shadow.querySelector("[data-notes-count]").textContent = `${notes.length} note${notes.length === 1 ? "" : "s"} matching this view`;
     });
     shadow.querySelector("[data-test-input]").addEventListener("input", (event) => {
       state.tests[activeTest].input = event.target.value;

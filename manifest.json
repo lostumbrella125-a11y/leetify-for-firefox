@@ -31,7 +31,7 @@
         "*://codeforces.com/*",
         "*://*.codeforces.com/*"
       ],
-      "js": ["src/core.js", "src/runner.js", "src/testcases.js", "src/content.js"],
+      "js": ["src/core.js", "src/runner.js", "src/testcases.js", "src/history.js", "src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle"
     }

@@ -12,8 +12,9 @@ A polished Firefox WebExtension that turns Codeforces problem pages into a focus
 - Difficulty and topic tags read from the Codeforces page.
 - Works on problemset, contest, and gym problem routes.
 - My Notes view with prompts for observations, invariants, mistakes, complexity, and editorial insights.
-- Progress view with local streak, solved, attempts, difficulty, and topic-strength cards.
-- Training view with growth-zone, stretch-zone, similar-problem, and revision prompts.
+- Progress view with streak, solved, attempts, notes, and topic-strength values derived from local state and history.
+- Searchable notes dashboard in the extension options page, with problem links and local revision queues.
+- Training view with unfinished practice, topic focus, and solved-problem revision queues derived from saved activity.
 
 ## Install temporarily in Firefox
 
