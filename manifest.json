@@ -1,0 +1,43 @@
+{
+  "manifest_version": 2,
+  "name": "Leetify for Codeforces — Firefox",
+  "version": "0.1.0",
+  "description": "A focused Codeforces workspace for solving, testing, notes, and drafts.",
+  "homepage_url": "https://github.com/your-name/leetify-firefox",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "leetify-firefox@example.com",
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "https://codeforces.com/*",
+    "https://*.codeforces.com/*"
+  ],
+  "browser_action": {
+    "default_title": "Toggle Leetify workspace"
+  },
+  "background": {
+    "scripts": ["src/background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://codeforces.com/*",
+        "*://*.codeforces.com/*"
+      ],
+      "js": ["src/core.js", "src/content.js"],
+      "css": ["src/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  }
+}
