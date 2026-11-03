@@ -1,16 +1,19 @@
 # Leetify for Codeforces — Firefox
 
-A local-first Firefox WebExtension that turns Codeforces problem pages into a focused solving workspace.
+A polished Firefox WebExtension that turns Codeforces problem pages into a focused solving workspace inspired by modern coding practice tools.
 
 ## Included in this first release
 
-- Dark split-pane workspace with the original problem statement and a resizable editor.
+- LeetCode-inspired dark workspace with a compact rail, problem sidebar, focused typography, and a resizable statement/editor split.
 - C++17, Python 3, Java 17, and JavaScript draft templates.
-- Per-problem drafts, notes, language selection, split position, samples, and custom tests saved in Firefox storage.
+- Per-problem drafts, notes, language selection, split position, bookmarks, solved state, attempt count, samples, and custom tests saved in Firefox storage.
 - Built-in JavaScript runner with whitespace-normalized output comparison.
 - One-click handoff to the native Codeforces submission page, including code and language selection.
 - Difficulty and topic tags read from the Codeforces page.
 - Works on problemset, contest, and gym problem routes.
+- My Notes view with prompts for observations, invariants, mistakes, complexity, and editorial insights.
+- Progress view with local streak, solved, attempts, difficulty, and topic-strength cards.
+- Training view with growth-zone, stretch-zone, similar-problem, and revision prompts.
 
 ## Install temporarily in Firefox
 

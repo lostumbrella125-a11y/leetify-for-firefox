@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
   "name": "Leetify for Codeforces — Firefox",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A focused Codeforces workspace for solving, testing, notes, and drafts.",
-  "homepage_url": "https://github.com/your-name/leetify-firefox",
+  "homepage_url": "https://github.com/lostumbrella125-a11y/leetify-for-firefox",
   "browser_specific_settings": {
     "gecko": {
       "id": "leetify-firefox@example.com",
