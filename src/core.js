@@ -71,7 +71,7 @@ public class Main {
   }
 
   function parseProblemUrl(pathname) {
-    const path = String(pathname || "").replace(/\/+$/, "");
+    const path = String(pathname || "").split(/[?#]/)[0].replace(/\/+$/, "");
     let match = path.match(/^\/problemset\/problem\/([^/]+)\/([^/]+)$/i);
     if (match) {
       return { area: "problemset", contestId: match[1], index: match[2], key: `${match[1]}-${match[2]}` };
@@ -85,6 +85,191 @@ public class Main {
       return { area: "group", groupId: match[1], contestId: match[2], index: match[3], key: `${match[2]}-${match[3]}` };
     }
     return null;
+  }
+
+  function parseSubmissionRoute(pathname) {
+    const path = String(pathname || "").split(/[?#]/)[0].replace(/\/+$/, "") || "/";
+    let match = path.match(/^\/problemset\/(submit|status)(?:\/([^/]+)(?:\/problem)?\/([^/]+))?$/i);
+    if (match) {
+      return { area: "problemset", action: match[1].toLowerCase(), contestId: match[2], index: match[3] };
+    }
+    match = path.match(/^\/(contest|gym)\/([^/]+)\/(submit|status)(?:\/(?:problem\/)?([^/]+))?$/i);
+    if (match) {
+      return { area: match[1].toLowerCase(), contestId: match[2], action: match[3].toLowerCase(), index: match[4] };
+    }
+    match = path.match(/^\/group\/([^/]+)\/contest\/([^/]+)\/(submit|status)(?:\/(?:problem\/)?([^/]+))?$/i);
+    if (match) {
+      return { area: "group", groupId: match[1], contestId: match[2], action: match[3].toLowerCase(), index: match[4] };
+    }
+    return null;
+  }
+
+  function queryFirst(doc, selectors) {
+    if (!doc || typeof doc.querySelector !== "function") return null;
+    for (const selector of selectors) {
+      try {
+        const node = doc.querySelector(selector);
+        if (node) return node;
+      } catch (error) {
+        // Try the next known DOM shape.
+      }
+    }
+    return null;
+  }
+
+  function parseSubmissionForm(doc) {
+    return {
+      form: queryFirst(doc, ["form#submitForm", "form[action*='/submit']"]),
+      source: queryFirst(doc, [
+        "textarea[name='sourceCode']",
+        "textarea#sourceCode",
+        "textarea#sourceCodeTextarea",
+        "textarea[name='source']",
+        "textarea#source",
+        "textarea[name='programSource']"
+      ]),
+      language: queryFirst(doc, [
+        "select[name='programTypeId']",
+        "select[name='programType']",
+        "select#programTypeId",
+        "select#programType"
+      ]),
+      problem: queryFirst(doc, [
+        "select[name='submittedProblemIndex']",
+        "select#submittedProblemIndex",
+        "select[name='problemIndex']"
+      ]),
+      problemCode: queryFirst(doc, [
+        "input[name='submittedProblemCode']",
+        "input#submittedProblemCode",
+        "input[name='problemCode']"
+      ])
+    };
+  }
+
+  function optionText(option) {
+    return String(option && (option.textContent || option.label || option.text || option.value) || "").trim();
+  }
+
+  function languageOptionScore(option, language) {
+    const text = optionText(option);
+    const value = String(option && option.value || "");
+    const haystack = `${text} ${value}`;
+    if (language === "cpp") {
+      if (!/(?:c\+\+|gnu\s*c\+\+|clang)/i.test(haystack)) return -1;
+      return (/(?:17|20|23)/i.test(text) ? 30 : /gnu\s*c\+\+/i.test(text) ? 15 : 10) + (/c\+\+/i.test(text) ? 3 : 0);
+    }
+    if (language === "python") {
+      if (!/(?:python|pypy)/i.test(haystack)) return -1;
+      return /(?:python\s*3|pypy\s*3)/i.test(text) ? 30 : 10;
+    }
+    if (language === "java") {
+      if (!/java(?!script)/i.test(haystack)) return -1;
+      return /(?:17|21|11|openjdk)/i.test(text) ? 30 : 10;
+    }
+    if (language === "javascript") {
+      if (!/(?:javascript|node\.?js|ecmascript)/i.test(haystack)) return -1;
+      return 30;
+    }
+    return -1;
+  }
+
+  function findLanguageOption(options, language) {
+    const candidates = Array.from(options || []).map((option, index) => ({ option, index, score: languageOptionScore(option, language) }))
+      .filter((candidate) => candidate.score >= 0)
+      .sort((left, right) => right.score - left.score);
+    return candidates.length ? candidates[0].option : null;
+  }
+
+  function findProblemOption(options, problem) {
+    const index = String(problem && problem.index || problem || "").trim().toUpperCase();
+    if (!index) return null;
+    const contestId = String(problem && problem.contestId || "").trim();
+    const escaped = index.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const optionsList = Array.from(options || []);
+    const exact = optionsList.find((option) => String(option.value || "").trim().toUpperCase() === index);
+    if (exact) return exact;
+    const labelled = optionsList.find((option) => new RegExp(`^${escaped}\\s*[.) :-]`, "i").test(optionText(option)));
+    if (labelled) return labelled;
+    return optionsList.find((option) => {
+      const text = optionText(option).toUpperCase();
+      return text.includes(`${contestId}${index}`) || text.includes(`PROBLEM ${index}`);
+    }) || null;
+  }
+
+  function normalizeVerdict(value) {
+    const verdict = String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+    if (/^(?:ok|accepted|pretests passed|hacked)$/i.test(verdict) || /\b(?:ok|accepted)\b/i.test(verdict)) {
+      return { status: "accepted", verdict };
+    }
+    if (/(?:testing|running|queued|queue|pending|judging|in queue)/i.test(verdict)) {
+      return { status: "pending", verdict };
+    }
+    if (verdict) return { status: "failed", verdict };
+    return { status: "unknown", verdict: "" };
+  }
+
+  function problemFromHref(href) {
+    const value = String(href || "");
+    const path = value.match(/https?:\/\/[^/]+([^?#]*)/i);
+    return parseProblemUrl(path ? path[1] : value.split(/[?#]/)[0]);
+  }
+
+  function parseSubmissionRows(doc) {
+    if (!doc || typeof doc.querySelectorAll !== "function") return [];
+    let rows;
+    try {
+      rows = Array.from(doc.querySelectorAll("tr"));
+    } catch (error) {
+      return [];
+    }
+    return rows.map((row) => {
+      const cells = typeof row.querySelectorAll === "function" ? Array.from(row.querySelectorAll("td")) : [];
+      const problemLink = queryFirst(row, ["a[href*='/problem/']", "a[href*='/problemset/problem/']"]);
+      const authorLink = queryFirst(row, ["a[href*='/profile/']"]);
+      const verdictNode = queryFirst(row, [
+        ".submissionVerdictWrapper",
+        ".verdict-accepted",
+        ".verdict-wrong-answer",
+        ".verdict-testing",
+        "td:last-child"
+      ]);
+      const verdict = normalizeVerdict(verdictNode ? verdictNode.textContent : "");
+      const problem = problemFromHref(problemLink && problemLink.href);
+      return {
+        id: cells[0] ? optionText(cells[0]) : "",
+        problem,
+        handle: authorLink ? optionText(authorLink) : "",
+        verdict: verdict.verdict,
+        status: verdict.status,
+        text: optionText(row)
+      };
+    }).filter((row) => row.problem || row.verdict || row.status !== "unknown");
+  }
+
+  function parseCurrentUserHandle(doc) {
+    const link = queryFirst(doc, [
+      ".userbox a[href*='/profile/']",
+      "#header a[href*='/profile/']",
+      "a[href*='/profile/']"
+    ]);
+    if (!link) return "";
+    const match = String(link.href || "").match(/\/profile\/([^/?#]+)/i);
+    return match ? decodeURIComponent(match[1]) : optionText(link);
+  }
+
+  function getProblemStats(doc, problem, handle) {
+    const key = problem && problem.key ? problem.key : `${problem && problem.contestId}-${problem && problem.index}`;
+    const currentHandle = handle || parseCurrentUserHandle(doc);
+    const rows = parseSubmissionRows(doc).filter((row) => row.problem && row.problem.key === key);
+    const ownRows = currentHandle ? rows.filter((row) => !row.handle || row.handle === currentHandle) : rows;
+    return {
+      attempts: ownRows.length,
+      solved: ownRows.some((row) => row.status === "accepted"),
+      latest: ownRows[0] || null,
+      handle: currentHandle,
+      hasData: ownRows.length > 0
+    };
   }
 
   function parseProblemMetadata(doc, locationLike) {
@@ -170,6 +355,14 @@ public class Main {
     getLanguage,
     starterCode,
     parseProblemUrl,
+    parseSubmissionRoute,
+    parseSubmissionForm,
+    findLanguageOption,
+    findProblemOption,
+    normalizeVerdict,
+    parseSubmissionRows,
+    parseCurrentUserHandle,
+    getProblemStats,
     parseProblemMetadata,
     parseSampleTests,
     normalizeOutput,

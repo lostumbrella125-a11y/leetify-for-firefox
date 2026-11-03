@@ -19,6 +19,11 @@
   let activeTest = 0;
   let javascriptRunner;
   let runToken = 0;
+  let handoffObserver;
+  let handoffTimer;
+  let statusObserver;
+  let statusTimer;
+  let statusCheckQueued = false;
 
   const storageGet = (key) => store.get(key);
   const storageSet = (key, value) => store.set(key, value);
@@ -177,6 +182,10 @@
       .training-card ul { padding-left: 16px; margin: 8px 0 0; color: #999; font-size: 11px; line-height: 1.6; }
       .training-card li + li { margin-top: 5px; }
       .solved-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 4px; color: #4bd37a; background: #203e2a; font-size: 10px; font-weight: 700; }
+      .status-pill { display: inline-flex; align-items: center; max-width: 220px; overflow: hidden; padding: 4px 7px; border-radius: 4px; color: #bdbdbd; background: #353535; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+      .status-pill.accepted { color: #4bd37a; background: #203e2a; }
+      .status-pill.pending { color: #ffd27a; background: #4a3820; }
+      .status-pill.failed { color: #ff9b91; background: #482522; }
       .hidden { display: none !important; }
       @media (max-width: 1050px) { .problem-sidebar { width: 190px; flex-basis: 190px; } .metric-grid { grid-template-columns: repeat(2, 1fr); } }
       @media (max-width: 800px) { .problem-sidebar { display: none; } .problem-title { max-width: 35vw; } .split { grid-template-columns: 1fr; grid-template-rows: minmax(280px, 45%) 6px minmax(390px, 1fr); } .drag-handle { cursor: row-resize; } .training-grid, .notes-grid { grid-template-columns: 1fr; } }
@@ -194,7 +203,9 @@
       split: 46,
       solved: false,
       bookmarked: false,
-      attempts: 0
+      attempts: 0,
+      lastVerdict: "",
+      verdictStatus: ""
     };
   }
 
@@ -272,7 +283,7 @@
     const metrics = data.metrics;
     return `<div class="app" role="application" aria-label="Leetify Codeforces workspace">
       <header class="topbar">
-        <div class="topbar-left"><div class="brand"><div class="brand-mark">L</div><div><div class="brand-title">Leetify</div><div class="brand-subtitle">For Codeforces</div></div></div><span class="topbar-divider"></span><div class="problem-heading"><span class="problem-id">${escapeHtml(metadata.label)}</span><span class="problem-title">${escapeHtml(metadata.title)}</span><span data-solved-label class="solved-pill hidden">✓ Solved</span></div></div>
+        <div class="topbar-left"><div class="brand"><div class="brand-mark">L</div><div><div class="brand-title">Leetify</div><div class="brand-subtitle">For Codeforces</div></div></div><span class="topbar-divider"></span><div class="problem-heading"><span class="problem-id">${escapeHtml(metadata.label)}</span><span class="problem-title">${escapeHtml(metadata.title)}</span><span data-solved-label class="solved-pill hidden">✓ Solved</span><span data-verdict-label class="status-pill hidden"></span></div></div>
         <div class="topbar-right"><span class="save-state" data-save-state>Saved locally</span><button class="icon-btn" data-action="bookmark" data-bookmark title="Bookmark problem">☆</button><button class="ghost" data-action="close" title="Close workspace">Close</button></div>
       </header>
       <div class="body">
@@ -342,6 +353,10 @@
     shadow.querySelector("[data-bookmark]").classList.toggle("bookmarked", Boolean(state.bookmarked));
     shadow.querySelector("[data-bookmark]").textContent = state.bookmarked ? "★" : "☆";
     shadow.querySelector("[data-solved-label]").classList.toggle("hidden", !state.solved);
+    const verdict = shadow.querySelector("[data-verdict-label]");
+    const verdictVisible = Boolean(state.lastVerdict);
+    verdict.className = `status-pill ${state.verdictStatus || ""}${verdictVisible ? "" : " hidden"}`;
+    verdict.textContent = verdictVisible ? state.lastVerdict : "";
     shadow.querySelectorAll("[data-mark-solved-label]").forEach((element) => {
       element.textContent = state.solved ? "Solved" : "Mark as solved";
     });
@@ -596,11 +611,17 @@
 
   async function submitCode() {
     saveActiveTest();
+    const saved = await store.saveProblemState(metadata.key, state, metadata);
+    if (saved) state.updatedAt = saved.updatedAt;
+    const createdAt = Date.now();
     await storageSet(pendingKey, {
       code: currentCode(),
       language: state.language,
       problem: { area: metadata.area, groupId: metadata.groupId, contestId: metadata.contestId, index: metadata.index },
-      createdAt: Date.now()
+      stateKey: metadata.key,
+      status: "awaiting-form",
+      createdAt,
+      attemptRecorded: false
     });
     window.location.href = core.submitPath(metadata);
   }
@@ -611,83 +632,307 @@
       javascriptRunner.terminate();
       javascriptRunner = null;
     }
+    stopStatusBridge();
     if (host) host.remove();
     host = null;
     shadow = null;
     document.documentElement.style.overflow = "";
   }
 
-  async function showSubmissionHandoff() {
-    const pending = await storageGet(pendingKey);
-    if (!pending || !pending.code || !/\/submit(?:\/|$)/i.test(window.location.pathname)) return;
-    const fill = () => {
-      const source = document.querySelector("textarea[name='source'], textarea#sourceCode, textarea#sourceCodeTextarea, textarea[name='sourceCode']");
-      const select = document.querySelector("select[name='programTypeId'], select[name='programType']");
-      if (!source) return false;
-      source.value = pending.code;
-      source.dispatchEvent(new Event("input", { bubbles: true }));
-      source.dispatchEvent(new Event("change", { bubbles: true }));
-      if (pending.problem) {
-        const problemSelect = document.querySelector("select[name='submittedProblemIndex']");
-        const problemCode = document.querySelector("input[name='submittedProblemCode']");
-        if (problemSelect && pending.problem.index) {
-          const option = Array.from(problemSelect.options).find((item) => item.value === pending.problem.index || item.textContent.trim().startsWith(`${pending.problem.index}.`));
-          if (option) {
-            problemSelect.value = option.value;
-            problemSelect.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-        }
-        if (problemCode && pending.problem.contestId && pending.problem.index) {
-          problemCode.value = `${pending.problem.contestId}${pending.problem.index}`;
-          problemCode.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-      }
-      if (select) {
-        const options = Array.from(select.options);
-        const matcher = pending.language === "cpp"
-          ? (text) => /(?:g\+\+|c\+\+|clang)/i.test(text)
-          : pending.language === "python"
-            ? (text) => /python\s*3|pypy\s*3/i.test(text)
-            : pending.language === "java"
-              ? (text) => /java(?!script)/i.test(text)
-              : (text) => /javascript|node\.js/i.test(text);
-        const candidates = options.filter((item) => matcher(item.textContent));
-        const option = candidates.find((item) => /17|20|3\.x|node/i.test(item.textContent)) || candidates[0];
-        if (option) {
-          select.value = option.value;
-          select.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-      }
-      showHandoffBanner(pending);
-      return true;
-    };
-    if (fill()) return;
-    const observer = new MutationObserver(() => { if (fill()) observer.disconnect(); });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    setTimeout(() => observer.disconnect(), 10000);
+  function dispatchFieldEvent(node, type) {
+    if (!node || typeof node.dispatchEvent !== "function") return;
+    node.dispatchEvent(new Event(type, { bubbles: true }));
   }
 
-  function showHandoffBanner(pending) {
-    if (document.querySelector("[data-leetify-handoff]")) return;
-    const banner = document.createElement("div");
-    banner.dataset.leetifyHandoff = "true";
-    banner.textContent = `Leetify loaded your ${core.getLanguage(pending.language).label} draft. Review it, then submit normally.`;
-    Object.assign(banner.style, { position: "fixed", zIndex: "2147483647", right: "18px", bottom: "18px", maxWidth: "360px", padding: "12px 15px", border: "1px solid #4eb78d", borderRadius: "7px", color: "#dff9ed", background: "#123b32", boxShadow: "0 8px 25px #0006", font: "13px/1.4 system-ui, sans-serif" });
-    document.body.appendChild(banner);
-    setTimeout(() => banner.remove(), 8000);
-    storageSet(pendingKey, null);
+  function findAceTextInput() {
+    if (!document.querySelector) return null;
+    try {
+      return document.querySelector(".ace_editor textarea.ace_text-input, textarea.ace_text-input");
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function setAceTextInput(input, value) {
+    if (!input) return;
+    input.focus();
+    if (typeof input.setRangeText === "function") {
+      input.setRangeText(value, 0, String(input.value || "").length, "end");
+    } else {
+      input.value = value;
+    }
+    dispatchFieldEvent(input, "input");
+    dispatchFieldEvent(input, "change");
+  }
+
+  function findAceEditor() {
+    const ace = extensionGlobal.ace;
+    if (!ace || typeof ace.edit !== "function" || !document.querySelectorAll) return null;
+    const candidates = [];
+    ["#sourceCode", "#sourceCodeTextarea", "#editor", ".ace_editor", "[id*='sourceCode']"].forEach((selector) => {
+      try {
+        candidates.push(...Array.from(document.querySelectorAll(selector)));
+      } catch (error) {
+        // Try the other editor shapes.
+      }
+    });
+    for (const candidate of candidates) {
+      try {
+        const editor = ace.edit(candidate);
+        if (editor && typeof editor.getValue === "function" && typeof editor.setValue === "function") return editor;
+      } catch (error) {
+        // This node is not an Ace editor instance.
+      }
+    }
+    return null;
+  }
+
+  function setAceValue(editor, value) {
+    if (!editor) return;
+    editor.setValue(value, -1);
+    if (typeof editor.clearSelection === "function") editor.clearSelection();
+  }
+
+  function fillSubmissionForm(pending) {
+    const fields = core.parseSubmissionForm(document);
+    const editor = findAceEditor();
+    const aceTextInput = findAceTextInput();
+    if (!fields.source && !editor && !aceTextInput) return null;
+
+    if (fields.source) {
+      fields.source.value = pending.code;
+      dispatchFieldEvent(fields.source, "input");
+      dispatchFieldEvent(fields.source, "change");
+    }
+    if (editor) {
+      setAceValue(editor, pending.code);
+      if (fields.source) {
+        fields.source.value = pending.code;
+        dispatchFieldEvent(fields.source, "input");
+        dispatchFieldEvent(fields.source, "change");
+      }
+    } else if (aceTextInput) {
+      setAceTextInput(aceTextInput, pending.code);
+    }
+
+    let problemReady = true;
+    if (pending.problem) {
+      const problemSelect = fields.problem;
+      const problemCode = fields.problemCode;
+      if (problemSelect) {
+        const option = core.findProblemOption(problemSelect.options, pending.problem);
+        problemReady = Boolean(option);
+        if (option) {
+          problemSelect.value = option.value;
+          dispatchFieldEvent(problemSelect, "input");
+          dispatchFieldEvent(problemSelect, "change");
+        }
+      }
+      if (problemCode && pending.problem.contestId && pending.problem.index) {
+        problemCode.value = `${pending.problem.contestId}${pending.problem.index}`;
+        dispatchFieldEvent(problemCode, "input");
+        dispatchFieldEvent(problemCode, "change");
+        problemReady = problemReady && problemCode.value === `${pending.problem.contestId}${pending.problem.index}`;
+      } else if (!problemSelect && !problemCode) {
+        problemReady = true;
+      }
+    }
+
+    let languageReady = true;
+    if (fields.language) {
+      const option = core.findLanguageOption(fields.language.options, pending.language);
+      languageReady = Boolean(option);
+      if (option) {
+        fields.language.value = option.value;
+        dispatchFieldEvent(fields.language, "input");
+        dispatchFieldEvent(fields.language, "change");
+      }
+    }
+
+    const editorValue = editor && String(editor.getValue() || "");
+    const aceInputValue = aceTextInput && String(aceTextInput.value || "");
+    const sourceValue = fields.source && String(fields.source.value || "");
+    const sourceReady = sourceValue === pending.code || editorValue === pending.code || aceInputValue === pending.code;
+    return {
+      form: fields.form
+        || (fields.source && fields.source.form)
+        || (fields.source && fields.source.closest && fields.source.closest("form")),
+      sourceReady,
+      ready: sourceReady && problemReady && languageReady
+    };
+  }
+
+  async function recordNativeSubmission(pending) {
+    const current = await storageGet(pendingKey);
+    if (!current || current.createdAt !== pending.createdAt || current.attemptRecorded) return;
+    current.status = "submitted";
+    current.submittedAt = Date.now();
+    current.attemptRecorded = true;
+    await storageSet(pendingKey, current);
+    if (!current.stateKey) return;
+    const saved = await storageGet(history.stateKey(current.stateKey));
+    if (!saved) return;
+    saved.attempts = (saved.attempts || 0) + 1;
+    saved.verdictStatus = "pending";
+    await storageSet(history.stateKey(current.stateKey), saved);
+  }
+
+  function bindSubmissionForm(form, pending) {
+    if (!form || form.__leetifyHandoffBound) return;
+    form.__leetifyHandoffBound = true;
+    form.addEventListener("submit", () => { recordNativeSubmission(pending); }, true);
+  }
+
+  async function showSubmissionHandoff() {
+    const pending = await storageGet(pendingKey);
+    const route = core.parseSubmissionRoute(window.location.pathname);
+    if (!pending || !pending.code || !route || route.action !== "submit") return;
+    clearTimeout(handoffTimer);
+    if (handoffObserver) handoffObserver.disconnect();
+    const fill = () => {
+      const result = fillSubmissionForm(pending);
+      if (!result) return false;
+      if (result.form) bindSubmissionForm(result.form, pending);
+      if (result.sourceReady) showHandoffBanner(pending, result.ready);
+      return result.ready;
+    };
+    if (fill()) return;
+    handoffObserver = new MutationObserver(() => { if (fill()) handoffObserver.disconnect(); });
+    handoffObserver.observe(document.documentElement, { childList: true, subtree: true });
+    handoffTimer = setTimeout(() => { if (handoffObserver) handoffObserver.disconnect(); }, 15000);
+  }
+
+  function showHandoffBanner(pending, ready) {
+    let banner = document.querySelector("[data-leetify-handoff]");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.dataset.leetifyHandoff = "true";
+      Object.assign(banner.style, { position: "fixed", zIndex: "2147483647", right: "18px", bottom: "18px", maxWidth: "360px", padding: "12px 15px", border: "1px solid #4eb78d", borderRadius: "7px", color: "#dff9ed", background: "#123b32", boxShadow: "0 8px 25px #0006", font: "13px/1.4 system-ui, sans-serif" });
+      document.body.appendChild(banner);
+      setTimeout(() => banner.remove(), 12000);
+    }
+    banner.textContent = ready
+      ? `Leetify loaded your ${core.getLanguage(pending.language).label} draft. Review it, then submit normally. The draft stays pending until Codeforces publishes a verdict.`
+      : `Leetify loaded your ${core.getLanguage(pending.language).label} draft. Review the problem and language fields, then submit normally.`;
+  }
+
+  function showStatusBanner(status, text) {
+    let banner = document.querySelector("[data-leetify-status]");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.dataset.leetifyStatus = "true";
+      Object.assign(banner.style, { position: "fixed", zIndex: "2147483647", right: "18px", bottom: "18px", maxWidth: "360px", padding: "12px 15px", border: "1px solid #777", borderRadius: "7px", color: "#eee", background: "#252525", boxShadow: "0 8px 25px #0006", font: "13px/1.4 system-ui, sans-serif" });
+      document.body.appendChild(banner);
+    }
+    const className = `leetify-status-${status || "unknown"}`;
+    if (banner.className === className && banner.textContent === text) return;
+    banner.className = className;
+    banner.textContent = text;
+  }
+
+  function stopStatusBridge() {
+    clearInterval(statusTimer);
+    statusTimer = null;
+    statusCheckQueued = false;
+    if (statusObserver) statusObserver.disconnect();
+    statusObserver = null;
+  }
+
+  function sameProblem(left, right) {
+    return left && right && String(left.contestId) === String(right.contestId) && String(left.index).toUpperCase() === String(right.index).toUpperCase();
+  }
+
+  async function applyVisibleStats(stats) {
+    if (!stats || !stats.hasData || !state) return;
+    const latest = stats.latest;
+    const changed = state.attempts < stats.attempts
+      || (!state.solved && stats.solved)
+      || (latest && latest.verdict && latest.verdict !== state.lastVerdict);
+    state.attempts = Math.max(state.attempts || 0, stats.attempts);
+    if (stats.solved) state.solved = true;
+    if (latest && latest.verdict) {
+      state.lastVerdict = latest.verdict;
+      state.verdictStatus = latest.status;
+    }
+    if (changed) {
+      refreshProblemStatus();
+      queueSave();
+    }
+  }
+
+  async function syncVisibleProblemStatus() {
+    if (!metadata || !state) return;
+    const stats = core.getProblemStats(document, metadata);
+    await applyVisibleStats(stats);
+    const pending = await storageGet(pendingKey);
+    if (pending && pending.status === "submitted" && sameProblem(pending.problem, metadata)) {
+      await syncPendingStatus(pending, stats);
+    }
+  }
+
+  async function syncPendingStatus(existingPending, knownStats) {
+    const pending = existingPending || await storageGet(pendingKey);
+    if (!pending || pending.status !== "submitted" || !pending.problem) return false;
+    const stats = knownStats || core.getProblemStats(document, pending.problem);
+    if (!stats || !stats.hasData || !stats.latest) {
+      showStatusBanner("pending", "Waiting for Codeforces to publish the submission verdict…");
+      return false;
+    }
+    const latest = stats.latest;
+    const current = await storageGet(pendingKey);
+    if (!current || current.createdAt !== pending.createdAt) return false;
+    current.verdict = latest.verdict;
+    current.status = latest.status;
+    current.updatedAt = Date.now();
+    await storageSet(pendingKey, current);
+    showStatusBanner(latest.status, `Codeforces verdict: ${latest.verdict || latest.status}. Attempts here: ${stats.attempts}.`);
+    if (current.stateKey) {
+      const saved = await storageGet(history.stateKey(current.stateKey));
+      if (saved) {
+        saved.attempts = Math.max(saved.attempts || 0, stats.attempts);
+        saved.solved = Boolean(saved.solved || stats.solved);
+        saved.lastVerdict = latest.verdict;
+        saved.verdictStatus = latest.status;
+        await storageSet(history.stateKey(current.stateKey), saved);
+      }
+    }
+    if (latest.status === "accepted" || latest.status === "failed") {
+      await storageSet(pendingKey, null);
+      stopStatusBridge();
+    }
+    return true;
+  }
+
+  async function startStatusBridge() {
+    stopStatusBridge();
+    await syncPendingStatus();
+    const check = () => {
+      if (statusCheckQueued) return;
+      statusCheckQueued = true;
+      setTimeout(() => {
+        statusCheckQueued = false;
+        syncPendingStatus();
+      }, 0);
+    };
+    statusObserver = new MutationObserver(check);
+    statusObserver.observe(document.body || document.documentElement, { childList: true, subtree: true, characterData: true });
+    statusTimer = setInterval(check, 2000);
+    setTimeout(stopStatusBridge, 300000);
   }
 
   async function init() {
     const currentMetadata = core && core.parseProblemMetadata(document, window.location);
+    const route = core.parseSubmissionRoute(window.location.pathname);
     if (!currentMetadata) {
       await showSubmissionHandoff();
+      if (route && route.action === "status") await startStatusBridge();
       return;
     }
     if (host) return;
     metadata = currentMetadata;
     await loadState();
     render();
+    await syncVisibleProblemStatus();
   }
 
   if (typeof browser !== "undefined" && browser.runtime) {
